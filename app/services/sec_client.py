@@ -11,10 +11,19 @@ BASE_URL = "https://data.sec.gov"
 SEC_URL = "https://www.sec.gov"
 
 
+def _normalize_name(name: str) -> str:
+    """Normalize company name for matching."""
+    name = name.upper()
+    name = re.sub(r"[.,']", "", name)
+    name = re.sub(r"\s+", " ", name)
+    return name.strip()
+
+
 class SECClient:
     def __init__(self):
         self._http = httpx.Client(headers=HEADERS, timeout=60)
         self._ticker_map: dict[str, dict] | None = None
+        self._name_map: dict[str, list[dict]] | None = None
 
     def _get_ticker_map(self) -> dict[str, dict]:
         if self._ticker_map is None:
@@ -25,11 +34,81 @@ class SECClient:
             self._ticker_map = {v["ticker"]: v for v in data.values()}
         return self._ticker_map
 
+    def _get_name_map(self) -> dict[str, list[dict]]:
+        """Build normalized name -> company info mapping."""
+        if self._name_map is None:
+            ticker_map = self._get_ticker_map()
+            self._name_map = {}
+            for info in ticker_map.values():
+                normalized = _normalize_name(info["title"])
+                if normalized not in self._name_map:
+                    self._name_map[normalized] = []
+                self._name_map[normalized].append(info)
+        return self._name_map
+
     def ticker_to_cik(self, ticker: str) -> str | None:
         ticker_map = self._get_ticker_map()
         info = ticker_map.get(ticker.upper())
         if info:
             return str(info["cik_str"]).zfill(10)
+        return None
+
+    def search_by_name(self, query: str, limit: int = 10) -> list[dict]:
+        """Search for companies by name. Returns list of matches."""
+        name_map = self._get_name_map()
+        query_normalized = _normalize_name(query)
+        results = []
+
+        # Exact match first
+        if query_normalized in name_map:
+            for info in name_map[query_normalized]:
+                results.append({
+                    "ticker": info["ticker"],
+                    "name": info["title"],
+                    "cik": str(info["cik_str"]).zfill(10),
+                    "match_type": "exact",
+                })
+
+        # Prefix match
+        for name, infos in name_map.items():
+            if name.startswith(query_normalized) and name != query_normalized:
+                for info in infos:
+                    results.append({
+                        "ticker": info["ticker"],
+                        "name": info["title"],
+                        "cik": str(info["cik_str"]).zfill(10),
+                        "match_type": "prefix",
+                    })
+
+        # Contains match (if not enough results)
+        if len(results) < limit:
+            for name, infos in name_map.items():
+                if query_normalized in name and not name.startswith(query_normalized):
+                    for info in infos:
+                        results.append({
+                            "ticker": info["ticker"],
+                            "name": info["title"],
+                            "cik": str(info["cik_str"]).zfill(10),
+                            "match_type": "contains",
+                        })
+
+        # Dedupe and limit
+        seen = set()
+        unique_results = []
+        for r in results:
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
+                unique_results.append(r)
+                if len(unique_results) >= limit:
+                    break
+
+        return unique_results
+
+    def name_to_ticker(self, name: str) -> str | None:
+        """Get best matching ticker for a company name."""
+        results = self.search_by_name(name, limit=1)
+        if results:
+            return results[0]["ticker"]
         return None
 
     def get_company_info(self, ticker: str) -> dict | None:

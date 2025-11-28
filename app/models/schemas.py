@@ -104,3 +104,15 @@ class CompanyInfo(BaseModel):
     fiscal_year_end: str
     state_of_incorporation: str
     recent_filings_count: int
+
+
+class CompanySearchResult(BaseModel):
+    ticker: str
+    name: str
+    cik: str
+    match_type: str
+
+
+class CompanySearchResponse(BaseModel):
+    query: str
+    results: list[CompanySearchResult]

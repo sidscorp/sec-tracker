@@ -5,6 +5,7 @@ from app.core.llm import llm_client
 from app.models.schemas import (
     BusinessOverviewResponse,
     CompanyInfo,
+    CompanySearchResponse,
     CompetitorResponse,
     CybersecurityResponse,
     RiskResponse,
@@ -28,6 +29,13 @@ def _llm_response_to_metrics(response) -> dict | None:
         "cost_usd": response.cost_usd,
         "latency_ms": response.latency_ms,
     }
+
+
+@router.get("/search", response_model=CompanySearchResponse)
+async def search_companies(q: str, limit: int = 10):
+    """Search for companies by name. Returns matching tickers."""
+    results = sec_client.search_by_name(q, limit=min(limit, 50))
+    return CompanySearchResponse(query=q, results=results)
 
 
 @router.get("/company/{ticker}", response_model=CompanyInfo)
