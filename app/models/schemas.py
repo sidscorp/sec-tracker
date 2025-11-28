@@ -107,12 +107,26 @@ class CompanyInfo(BaseModel):
 
 
 class CompanySearchResult(BaseModel):
+    """A single company search result."""
     ticker: str
     name: str
-    cik: str
-    match_type: str
+    cik: str | None
+    match_type: str  # "direct", "wikidata", "llm", "fallback"
+    score: float
+    chain: list[str] | None = None  # Ownership chain for subsidiary matches
 
 
 class CompanySearchResponse(BaseModel):
+    """Response for company search endpoint."""
     query: str
     results: list[CompanySearchResult]
+
+
+class TickerLookupResult(BaseModel):
+    """Result of resolving a query to a single ticker."""
+    query: str
+    ticker: str | None
+    company_name: str | None
+    method: str  # "direct", "wikidata", "llm", "fallback"
+    confidence: float
+    chain: list[str] | None = None
