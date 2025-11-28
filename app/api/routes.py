@@ -5,13 +5,17 @@ from app.core.llm import llm_client
 from app.models.schemas import (
     BusinessOverviewResponse,
     CompanyInfo,
+    CompanySearchResponse,
+    CompanySearchResult,
     CompetitorResponse,
     CybersecurityResponse,
     RiskResponse,
     SessionStats,
+    TickerLookupResult,
 )
 from app.services.extraction import extraction_service
 from app.services.sec_client import sec_client
+from app.services.ticker_lookup import ticker_lookup
 
 router = APIRouter()
 
@@ -28,6 +32,44 @@ def _llm_response_to_metrics(response) -> dict | None:
         "cost_usd": response.cost_usd,
         "latency_ms": response.latency_ms,
     }
+
+
+@router.get("/search", response_model=CompanySearchResponse)
+async def search_companies(q: str, limit: int = 10):
+    """
+    Search for companies by name, brand, or subsidiary.
+
+    Uses multi-stage lookup:
+    1. Direct fuzzy match against SEC company names
+    2. Wikidata lookup for subsidiaries (e.g., "WhatsApp" → META)
+    3. LLM fallback for typos and brand aliases
+
+    Returns list of matches with confidence scores and lookup method.
+    """
+    results = ticker_lookup.search(q, limit=min(limit, 50))
+    return CompanySearchResponse(
+        query=q,
+        results=[CompanySearchResult(**r) for r in results],
+    )
+
+
+@router.get("/lookup", response_model=TickerLookupResult)
+async def lookup_ticker(q: str):
+    """
+    Resolve a company name/brand/subsidiary to a single SEC ticker.
+
+    Best for when you need one definitive answer rather than a list.
+    Uses the same multi-stage lookup as /search but returns only the best match.
+    """
+    result = ticker_lookup.lookup(q)
+    return TickerLookupResult(
+        query=result.query,
+        ticker=result.ticker,
+        company_name=result.company_name,
+        method=result.method.value,
+        confidence=result.confidence,
+        chain=result.chain,
+    )
 
 
 @router.get("/company/{ticker}", response_model=CompanyInfo)
