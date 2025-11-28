@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.core.llm import llm_client
 from app.models.schemas import (
+    AIExtractionResponse,
     BusinessOverviewResponse,
     CompanyInfo,
     CompanySearchResponse,
@@ -133,6 +134,36 @@ async def extract_business_overview(ticker: str):
     data, response, error = extraction_service.extract_business_overview(ticker)
     return BusinessOverviewResponse(
         ticker=ticker.upper(),
+        data=data,
+        llm_metrics=_llm_response_to_metrics(response),
+        error=error or (response.error if response else None),
+    )
+
+
+@router.get("/extract/{ticker}/ai", response_model=AIExtractionResponse)
+async def extract_ai_deep_dive(ticker: str):
+    """
+    Extract AI-focused analysis from company's 10-K.
+
+    Analyzes the company's AI narrative, products, risks, investments,
+    competitive position, and key metrics. Useful for tracking how
+    companies are positioning themselves in the AI landscape.
+
+    Returns:
+        - ai_narrative_stance: opportunity-focused, risk-focused, balanced, or minimal
+        - ai_mention_count: Total AI-related term mentions in filing
+        - ai_products_services: Named AI products and monetization
+        - ai_risks_disclosed: AI-specific risks with categories
+        - ai_investments: Infrastructure, partnerships, acquisitions
+        - ai_competitive_position: Claimed advantages and named competitors
+        - ai_metrics: Revenue, adoption, and other KPIs
+        - key_ai_quotes: Most significant AI strategy statements
+    """
+    data, response, error, filing_info = extraction_service.extract_ai_deep_dive(ticker)
+    return AIExtractionResponse(
+        ticker=ticker.upper(),
+        filing_date=filing_info.get("filing_date") if filing_info else None,
+        fiscal_year=filing_info.get("fiscal_year") if filing_info else None,
         data=data,
         llm_metrics=_llm_response_to_metrics(response),
         error=error or (response.error if response else None),

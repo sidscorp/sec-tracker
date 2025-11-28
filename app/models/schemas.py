@@ -74,7 +74,7 @@ class BusinessOverviewExtraction(BaseModel):
     business_segments: list[BusinessSegment]
     markets: list[str]
     employee_count: int | None
-    headquarters: str
+    headquarters: str | None
     key_technologies: list[str]
 
 
@@ -130,3 +130,60 @@ class TickerLookupResult(BaseModel):
     method: str  # "direct", "wikidata", "llm", "fallback"
     confidence: float
     chain: list[str] | None = None
+
+
+# AI Deep Dive Extraction Schemas
+class AIProduct(BaseModel):
+    """An AI product or service mentioned in the filing."""
+    name: str
+    description: str
+    monetization: str | None = None
+
+
+class AIRisk(BaseModel):
+    """An AI-related risk disclosed in the filing."""
+    risk: str
+    category: str  # competition, regulation, talent, ethics, IP/legal, execution, dependency, other
+
+
+class AIInvestments(BaseModel):
+    """AI investment signals from the filing."""
+    infrastructure_mentions: str | None = None
+    partnerships: list[str] = []
+    acquisitions: list[str] = []
+
+
+class AICompetitivePosition(BaseModel):
+    """How the company positions itself in AI."""
+    claimed_advantages: list[str] = []
+    named_competitors: list[str] = []
+    market_position_claim: str | None = None
+
+
+class AIMetrics(BaseModel):
+    """Quantitative AI metrics from the filing."""
+    revenue_mentions: str | None = None
+    adoption_metrics: str | None = None
+    other_kpis: list[str] = []
+
+
+class AIExtraction(BaseModel):
+    """Complete AI deep-dive extraction from a 10-K filing."""
+    ai_narrative_stance: str  # opportunity-focused, risk-focused, balanced, minimal
+    ai_mention_count: int = 0
+    ai_products_services: list[AIProduct] = []
+    ai_risks_disclosed: list[AIRisk] = []
+    ai_investments: AIInvestments
+    ai_competitive_position: AICompetitivePosition
+    ai_metrics: AIMetrics
+    key_ai_quotes: list[str] = []
+
+
+class AIExtractionResponse(BaseModel):
+    """Response for AI deep-dive extraction endpoint."""
+    ticker: str
+    filing_date: str | None = None
+    fiscal_year: str | None = None
+    data: AIExtraction | None
+    llm_metrics: LLMMetrics | None
+    error: str | None
