@@ -52,7 +52,7 @@ class TickerLookupService:
 
     def __init__(self):
         self._sec_names: list[str] | None = None
-        self._sec_name_to_info: dict[str, dict] | None = None
+        self._sec_name_to_tickers: dict[str, list[dict]] | None = None
 
     def _ensure_sec_data(self):
         """Load and cache SEC company data for fuzzy matching."""
@@ -60,15 +60,18 @@ class TickerLookupService:
             return
 
         ticker_map = sec_client._get_ticker_map()
-        self._sec_name_to_info = {}
+        self._sec_name_to_tickers = {}
         for info in ticker_map.values():
             name_upper = info["title"].upper()
-            self._sec_name_to_info[name_upper] = {
+            ticker_info = {
                 "ticker": info["ticker"],
                 "name": info["title"],
                 "cik": str(info["cik_str"]).zfill(10),
             }
-        self._sec_names = list(self._sec_name_to_info.keys())
+            if name_upper not in self._sec_name_to_tickers:
+                self._sec_name_to_tickers[name_upper] = []
+            self._sec_name_to_tickers[name_upper].append(ticker_info)
+        self._sec_names = list(self._sec_name_to_tickers.keys())
 
     def _fuzzy_match_sec(
         self, query: str, limit: int = 5
@@ -77,6 +80,7 @@ class TickerLookupService:
         Fuzzy match query against SEC company names.
 
         Returns list of (ticker, name, cik, score) tuples.
+        Includes all tickers for companies with multiple share classes (e.g., GOOG/GOOGL).
         """
         self._ensure_sec_data()
 
@@ -89,13 +93,13 @@ class TickerLookupService:
 
         matches = []
         for name, score, _ in results:
-            info = self._sec_name_to_info[name]
-            matches.append((
-                info["ticker"],
-                info["name"],
-                info["cik"],
-                score / 100,
-            ))
+            for info in self._sec_name_to_tickers[name]:
+                matches.append((
+                    info["ticker"],
+                    info["name"],
+                    info["cik"],
+                    score / 100,
+                ))
         return matches
 
     def _llm_identify_company(self, query: str) -> str | None:
