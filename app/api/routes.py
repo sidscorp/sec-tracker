@@ -4,6 +4,9 @@ from fastapi import APIRouter, HTTPException
 from app.core.llm import llm_client
 from app.models.schemas import (
     AIExtractionResponse,
+    AIHistoryResponse,
+    AIHistoryTrend,
+    AIYearData,
     BusinessOverviewResponse,
     CompanyInfo,
     CompanySearchResponse,
@@ -167,6 +170,89 @@ async def extract_ai_deep_dive(ticker: str):
         data=data,
         llm_metrics=_llm_response_to_metrics(response),
         error=error or (response.error if response else None),
+    )
+
+
+@router.get("/extract/{ticker}/ai/history", response_model=AIHistoryResponse)
+async def extract_ai_history(ticker: str, years: int = 5):
+    """
+    Extract AI-focused analysis from multiple years of 10-K filings.
+
+    Analyzes the company's AI narrative evolution over time, enabling
+    trend analysis of how companies have adapted to AI.
+
+    Args:
+        ticker: Company ticker symbol
+        years: Number of years to analyze (default 5, max 10)
+
+    Returns:
+        - years: List of AI extractions per fiscal year
+        - trend_summary: Aggregated trends including:
+            - ai_mention_counts: Year-over-year mention counts
+            - stance_changes: How AI narrative stance evolved
+            - total_cost_usd: Total LLM cost for all extractions
+    """
+    years = min(years, 10)  # Cap at 10 years
+
+    results, error = extraction_service.extract_ai_history(ticker, years=years)
+
+    if error and not results:
+        return AIHistoryResponse(
+            ticker=ticker.upper(),
+            years_requested=years,
+            years_found=0,
+            years=[],
+            trend_summary=None,
+            error=error,
+        )
+
+    # Convert results to response format
+    year_data = []
+    ai_mention_counts = {}
+    stance_changes = []
+    total_cost = 0.0
+    total_latency = 0.0
+
+    for r in results:
+        llm_metrics = None
+        if r.llm_response:
+            llm_metrics = _llm_response_to_metrics(r.llm_response)
+            total_cost += r.llm_response.cost_usd
+            total_latency += r.llm_response.latency_ms
+
+        year_data.append(AIYearData(
+            fiscal_year=r.fiscal_year,
+            filing_date=r.filing_date,
+            data=r.data,
+            llm_metrics=llm_metrics,
+            error=r.error,
+        ))
+
+        # Track trends
+        if r.data:
+            ai_mention_counts[r.fiscal_year] = r.data.get("ai_mention_count", 0)
+            stance_changes.append({
+                "year": r.fiscal_year,
+                "stance": r.data.get("ai_narrative_stance", "unknown"),
+            })
+
+    # Sort stance_changes by year ascending for cleaner trend view
+    stance_changes.sort(key=lambda x: x["year"])
+
+    trend_summary = AIHistoryTrend(
+        ai_mention_counts=ai_mention_counts,
+        stance_changes=stance_changes,
+        total_cost_usd=total_cost,
+        total_latency_ms=total_latency,
+    )
+
+    return AIHistoryResponse(
+        ticker=ticker.upper(),
+        years_requested=years,
+        years_found=len(results),
+        years=year_data,
+        trend_summary=trend_summary,
+        error=None,
     )
 
 

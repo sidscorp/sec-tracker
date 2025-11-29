@@ -131,8 +131,15 @@ class SECClient:
         response.raise_for_status()
         return response.json()
 
-    def get_filing_html(self, ticker: str, form_type: str = "10-K") -> str | None:
-        """Get the HTML content of the most recent filing of given type."""
+    def get_filing_html(self, ticker: str, form_type: str = "10-K", fiscal_year: int | None = None) -> str | None:
+        """
+        Get the HTML content of a filing of given type.
+
+        Args:
+            ticker: Company ticker symbol
+            form_type: Filing type (10-K, 10-Q, etc.)
+            fiscal_year: Optional fiscal year to fetch. If None, returns most recent.
+        """
         info = self.get_company_info(ticker)
         if not info:
             return None
@@ -142,6 +149,14 @@ class SECClient:
 
         for i, form in enumerate(filings["form"]):
             if form == form_type:
+                # If fiscal_year specified, check if this filing matches
+                if fiscal_year is not None:
+                    report_date = filings.get("reportDate", [])
+                    if i < len(report_date):
+                        filing_fy = int(report_date[i][:4])
+                        if filing_fy != fiscal_year:
+                            continue
+
                 accession = filings["accessionNumber"][i].replace("-", "")
                 primary_doc = filings["primaryDocument"][i]
                 url = f"{SEC_URL}/Archives/edgar/data/{cik}/{accession}/{primary_doc}"
@@ -150,6 +165,31 @@ class SECClient:
                 return response.text
 
         return None
+
+    def get_available_10k_years(self, ticker: str) -> list[dict]:
+        """
+        Get list of available 10-K filings with their fiscal years.
+
+        Returns list of dicts with fiscal_year, filing_date, accession_number.
+        """
+        info = self.get_company_info(ticker)
+        if not info:
+            return []
+
+        filings = info["filings"]["recent"]
+        results = []
+
+        for i, form in enumerate(filings["form"]):
+            if form == "10-K":
+                report_date = filings.get("reportDate", [])
+                if i < len(report_date):
+                    results.append({
+                        "fiscal_year": int(report_date[i][:4]),
+                        "filing_date": filings["filingDate"][i],
+                        "accession_number": filings["accessionNumber"][i],
+                    })
+
+        return results
 
     def _html_to_text(self, html: str) -> str:
         """Convert HTML to clean text."""

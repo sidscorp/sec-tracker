@@ -149,14 +149,14 @@ class AIRisk(BaseModel):
 class AIInvestments(BaseModel):
     """AI investment signals from the filing."""
     infrastructure_mentions: str | None = None
-    partnerships: list[str] = []
-    acquisitions: list[str] = []
+    partnerships: list[str] | None = []
+    acquisitions: list[str] | None = []
 
 
 class AICompetitivePosition(BaseModel):
     """How the company positions itself in AI."""
-    claimed_advantages: list[str] = []
-    named_competitors: list[str] = []
+    claimed_advantages: list[str] | None = []
+    named_competitors: list[str] | None = []
     market_position_claim: str | None = None
 
 
@@ -164,19 +164,19 @@ class AIMetrics(BaseModel):
     """Quantitative AI metrics from the filing."""
     revenue_mentions: str | None = None
     adoption_metrics: str | None = None
-    other_kpis: list[str] = []
+    other_kpis: list[str] | None = []
 
 
 class AIExtraction(BaseModel):
     """Complete AI deep-dive extraction from a 10-K filing."""
     ai_narrative_stance: str  # opportunity-focused, risk-focused, balanced, minimal
     ai_mention_count: int = 0
-    ai_products_services: list[AIProduct] = []
-    ai_risks_disclosed: list[AIRisk] = []
-    ai_investments: AIInvestments
-    ai_competitive_position: AICompetitivePosition
-    ai_metrics: AIMetrics
-    key_ai_quotes: list[str] = []
+    ai_products_services: list[AIProduct] | None = []
+    ai_risks_disclosed: list[AIRisk] | None = []
+    ai_investments: AIInvestments | None = None
+    ai_competitive_position: AICompetitivePosition | None = None
+    ai_metrics: AIMetrics | None = None
+    key_ai_quotes: list[str] | None = []
 
 
 class AIExtractionResponse(BaseModel):
@@ -186,4 +186,31 @@ class AIExtractionResponse(BaseModel):
     fiscal_year: str | None = None
     data: AIExtraction | None
     llm_metrics: LLMMetrics | None
+    error: str | None
+
+
+class AIYearData(BaseModel):
+    """AI extraction data for a single fiscal year."""
+    fiscal_year: int
+    filing_date: str
+    data: AIExtraction | None
+    llm_metrics: LLMMetrics | None
+    error: str | None
+
+
+class AIHistoryTrend(BaseModel):
+    """Summary trend metrics across years."""
+    ai_mention_counts: dict[int, int]  # fiscal_year -> count
+    stance_changes: list[dict]  # List of {year, stance} entries
+    total_cost_usd: float
+    total_latency_ms: float
+
+
+class AIHistoryResponse(BaseModel):
+    """Response for historical AI analysis endpoint."""
+    ticker: str
+    years_requested: int
+    years_found: int
+    years: list[AIYearData]
+    trend_summary: AIHistoryTrend | None
     error: str | None

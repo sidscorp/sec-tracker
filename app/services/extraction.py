@@ -85,6 +85,24 @@ Be specific and cite actual details from the filing. If AI is barely mentioned, 
 For risk categories use: competition, regulation, talent, ethics, IP/legal, execution, dependency, or other."""
 
 
+class AIYearResult:
+    """Result for a single year's AI extraction."""
+
+    def __init__(
+        self,
+        fiscal_year: int,
+        filing_date: str,
+        data: dict | None,
+        llm_response: LLMResponse | None,
+        error: str | None,
+    ):
+        self.fiscal_year = fiscal_year
+        self.filing_date = filing_date
+        self.data = data
+        self.llm_response = llm_response
+        self.error = error
+
+
 class ExtractionService:
     def extract_competitors(self, ticker: str) -> tuple[dict | None, LLMResponse | None, str | None]:
         """Extract competitor information from 10-K."""
@@ -221,15 +239,16 @@ class ExtractionService:
         ai_mention_count = self._count_ai_mentions(full_text)
 
         # Combine relevant sections for comprehensive AI analysis
+        # With large context models (1M+ tokens), we can send much more text
         combined_text = ""
         if sections.get("business"):
-            combined_text += "=== BUSINESS SECTION ===\n" + sections["business"][:25000] + "\n\n"
+            combined_text += "=== BUSINESS SECTION ===\n" + sections["business"][:80000] + "\n\n"
         if sections.get("risk_factors"):
-            combined_text += "=== RISK FACTORS ===\n" + sections["risk_factors"][:15000] + "\n\n"
+            combined_text += "=== RISK FACTORS ===\n" + sections["risk_factors"][:60000] + "\n\n"
         if sections.get("mdna"):
-            combined_text += "=== MD&A ===\n" + sections["mdna"][:10000] + "\n\n"
+            combined_text += "=== MD&A ===\n" + sections["mdna"][:40000] + "\n\n"
         if sections.get("competition"):
-            combined_text += "=== COMPETITION ===\n" + sections["competition"][:5000]
+            combined_text += "=== COMPETITION ===\n" + sections["competition"][:15000]
 
         if not combined_text:
             return None, None, "No sections found in 10-K", None
@@ -251,6 +270,94 @@ class ExtractionService:
         }
 
         return result, response, None, filing_info
+
+    def _extract_ai_for_year(self, ticker: str, fiscal_year: int, filing_date: str) -> AIYearResult:
+        """Extract AI info from a specific fiscal year's 10-K."""
+        html = sec_client.get_filing_html(ticker, "10-K", fiscal_year=fiscal_year)
+        if not html:
+            return AIYearResult(
+                fiscal_year=fiscal_year,
+                filing_date=filing_date,
+                data=None,
+                llm_response=None,
+                error=f"Could not fetch 10-K for FY {fiscal_year}",
+            )
+
+        sections = sec_client.extract_10k_sections(html)
+        full_text = sec_client._html_to_text(html)
+
+        # Count AI mentions
+        ai_mention_count = self._count_ai_mentions(full_text)
+
+        # Combine relevant sections
+        # With large context models (1M+ tokens), we can send much more text
+        combined_text = ""
+        if sections.get("business"):
+            combined_text += "=== BUSINESS SECTION ===\n" + sections["business"][:80000] + "\n\n"
+        if sections.get("risk_factors"):
+            combined_text += "=== RISK FACTORS ===\n" + sections["risk_factors"][:60000] + "\n\n"
+        if sections.get("mdna"):
+            combined_text += "=== MD&A ===\n" + sections["mdna"][:40000] + "\n\n"
+        if sections.get("competition"):
+            combined_text += "=== COMPETITION ===\n" + sections["competition"][:15000]
+
+        if not combined_text:
+            return AIYearResult(
+                fiscal_year=fiscal_year,
+                filing_date=filing_date,
+                data=None,
+                llm_response=None,
+                error="No sections found in 10-K",
+            )
+
+        result, response = llm_client.extract_json(
+            text=combined_text,
+            schema=SCHEMAS["ai_deep_dive"],
+            instructions=AI_EXTRACTION_INSTRUCTIONS,
+            metadata={"ticker": ticker, "fiscal_year": fiscal_year, "analysis": "ai_deep_dive"},
+        )
+
+        if result:
+            result["ai_mention_count"] = ai_mention_count
+
+        return AIYearResult(
+            fiscal_year=fiscal_year,
+            filing_date=filing_date,
+            data=result,
+            llm_response=response,
+            error=None,
+        )
+
+    def extract_ai_history(
+        self, ticker: str, years: int = 5
+    ) -> tuple[list[AIYearResult], str | None]:
+        """
+        Extract AI-focused information from multiple years of 10-K filings.
+
+        Args:
+            ticker: Company ticker symbol
+            years: Number of years to analyze (default 5)
+
+        Returns:
+            tuple of (list of AIYearResult, error message or None)
+        """
+        available = sec_client.get_available_10k_years(ticker)
+        if not available:
+            return [], f"No 10-K filings found for {ticker}"
+
+        # Take the most recent N years
+        filings_to_process = available[:years]
+        results = []
+
+        for filing in filings_to_process:
+            result = self._extract_ai_for_year(
+                ticker,
+                fiscal_year=filing["fiscal_year"],
+                filing_date=filing["filing_date"],
+            )
+            results.append(result)
+
+        return results, None
 
 
 extraction_service = ExtractionService()
