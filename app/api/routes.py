@@ -194,7 +194,8 @@ async def extract_ai_history(ticker: str, years: int = 5):
     """
     years = min(years, 10)  # Cap at 10 years
 
-    results, error = extraction_service.extract_ai_history(ticker, years=years)
+    # Use async parallel extraction for better performance
+    results, error = await extraction_service.extract_ai_history_async(ticker, years=years)
 
     if error and not results:
         return AIHistoryResponse(

@@ -1,4 +1,5 @@
 """SEC document extraction service using LLM."""
+import asyncio
 import re
 
 from app.core.llm import LLMResponse, llm_client
@@ -271,17 +272,18 @@ class ExtractionService:
 
         return result, response, None, filing_info
 
-    def _extract_ai_for_year(self, ticker: str, fiscal_year: int, filing_date: str) -> AIYearResult:
-        """Extract AI info from a specific fiscal year's 10-K."""
+    def _prepare_ai_extraction_data(
+        self, ticker: str, fiscal_year: int, filing_date: str
+    ) -> tuple[str | None, int, str | None]:
+        """
+        Prepare data for AI extraction (fetch filing, extract sections).
+
+        Returns:
+            tuple of (combined_text, ai_mention_count, error)
+        """
         html = sec_client.get_filing_html(ticker, "10-K", fiscal_year=fiscal_year)
         if not html:
-            return AIYearResult(
-                fiscal_year=fiscal_year,
-                filing_date=filing_date,
-                data=None,
-                llm_response=None,
-                error=f"Could not fetch 10-K for FY {fiscal_year}",
-            )
+            return None, 0, f"Could not fetch 10-K for FY {fiscal_year}"
 
         sections = sec_client.extract_10k_sections(html)
         full_text = sec_client._html_to_text(html)
@@ -302,15 +304,68 @@ class ExtractionService:
             combined_text += "=== COMPETITION ===\n" + sections["competition"][:15000]
 
         if not combined_text:
+            return None, 0, "No sections found in 10-K"
+
+        return combined_text, ai_mention_count, None
+
+    def _extract_ai_for_year(self, ticker: str, fiscal_year: int, filing_date: str) -> AIYearResult:
+        """Extract AI info from a specific fiscal year's 10-K (sync version)."""
+        combined_text, ai_mention_count, error = self._prepare_ai_extraction_data(
+            ticker, fiscal_year, filing_date
+        )
+
+        if error:
             return AIYearResult(
                 fiscal_year=fiscal_year,
                 filing_date=filing_date,
                 data=None,
                 llm_response=None,
-                error="No sections found in 10-K",
+                error=error,
             )
 
         result, response = llm_client.extract_json(
+            text=combined_text,
+            schema=SCHEMAS["ai_deep_dive"],
+            instructions=AI_EXTRACTION_INSTRUCTIONS,
+            metadata={"ticker": ticker, "fiscal_year": fiscal_year, "analysis": "ai_deep_dive"},
+        )
+
+        if result:
+            result["ai_mention_count"] = ai_mention_count
+
+        return AIYearResult(
+            fiscal_year=fiscal_year,
+            filing_date=filing_date,
+            data=result,
+            llm_response=response,
+            error=None,
+        )
+
+    async def _extract_ai_for_year_async(
+        self, ticker: str, fiscal_year: int, filing_date: str
+    ) -> AIYearResult:
+        """Extract AI info from a specific fiscal year's 10-K (async version)."""
+        # Data preparation is sync (SEC API calls) - run in thread pool
+        loop = asyncio.get_event_loop()
+        combined_text, ai_mention_count, error = await loop.run_in_executor(
+            None,
+            self._prepare_ai_extraction_data,
+            ticker,
+            fiscal_year,
+            filing_date,
+        )
+
+        if error:
+            return AIYearResult(
+                fiscal_year=fiscal_year,
+                filing_date=filing_date,
+                data=None,
+                llm_response=None,
+                error=error,
+            )
+
+        # LLM call is async
+        result, response = await llm_client.extract_json_async(
             text=combined_text,
             schema=SCHEMAS["ai_deep_dive"],
             instructions=AI_EXTRACTION_INSTRUCTIONS,
@@ -332,7 +387,7 @@ class ExtractionService:
         self, ticker: str, years: int = 5
     ) -> tuple[list[AIYearResult], str | None]:
         """
-        Extract AI-focused information from multiple years of 10-K filings.
+        Extract AI-focused information from multiple years of 10-K filings (sync).
 
         Args:
             ticker: Company ticker symbol
@@ -358,6 +413,43 @@ class ExtractionService:
             results.append(result)
 
         return results, None
+
+    async def extract_ai_history_async(
+        self, ticker: str, years: int = 5
+    ) -> tuple[list[AIYearResult], str | None]:
+        """
+        Extract AI-focused information from multiple years of 10-K filings (async/parallel).
+
+        Runs all year extractions in parallel using asyncio.gather() for faster results.
+
+        Args:
+            ticker: Company ticker symbol
+            years: Number of years to analyze (default 5)
+
+        Returns:
+            tuple of (list of AIYearResult, error message or None)
+        """
+        available = sec_client.get_available_10k_years(ticker)
+        if not available:
+            return [], f"No 10-K filings found for {ticker}"
+
+        # Take the most recent N years
+        filings_to_process = available[:years]
+
+        # Create async tasks for all years
+        tasks = [
+            self._extract_ai_for_year_async(
+                ticker,
+                fiscal_year=filing["fiscal_year"],
+                filing_date=filing["filing_date"],
+            )
+            for filing in filings_to_process
+        ]
+
+        # Run all extractions in parallel
+        results = await asyncio.gather(*tasks)
+
+        return list(results), None
 
 
 extraction_service = ExtractionService()

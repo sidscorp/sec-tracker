@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from app.core.config import settings
 
@@ -20,6 +20,9 @@ MODEL_PRICING = {
     "anthropic/claude-3-opus": {"input": 15.00, "output": 75.00},
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "google/gemini-2.0-flash-001": {"input": 0.10, "output": 0.40},
+    "google/gemini-2.0-flash-lite-001": {"input": 0.075, "output": 0.30},
+    "meta-llama/llama-3.3-70b-instruct:free": {"input": 0.0, "output": 0.0},
 }
 
 
@@ -69,6 +72,14 @@ class LLMClient:
 
     def __init__(self):
         self._client = OpenAI(
+            base_url=settings.OPENROUTER_BASE,
+            api_key=settings.OPENROUTER_API_KEY,
+            default_headers={
+                "HTTP-Referer": "http://localhost:3000",
+                "X-Title": "sec-tracker",
+            },
+        )
+        self._async_client = AsyncOpenAI(
             base_url=settings.OPENROUTER_BASE,
             api_key=settings.OPENROUTER_API_KEY,
             default_headers={
@@ -159,6 +170,114 @@ class LLMClient:
         )
 
         return llm_response
+
+    async def complete_async(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        max_tokens: int = 2000,
+        metadata: dict | None = None,
+    ) -> LLMResponse:
+        """Send an async completion request with full tracking."""
+        request_id = str(uuid.uuid4())[:8]
+        model = model or settings.OPENROUTER_MODEL
+        metadata = metadata or {}
+
+        logger.info(
+            f"LLM Request [{request_id}] model={model} prompt_len={len(prompt)} metadata={metadata}"
+        )
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        start_time = time.time()
+        error = None
+        content = ""
+        input_tokens = 0
+        output_tokens = 0
+
+        try:
+            response = await self._async_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content or ""
+            input_tokens = response.usage.prompt_tokens if response.usage else 0
+            output_tokens = response.usage.completion_tokens if response.usage else 0
+
+        except Exception as e:
+            error = str(e)
+            logger.error(f"LLM Request [{request_id}] failed: {error}")
+
+        latency_ms = (time.time() - start_time) * 1000
+        total_tokens = input_tokens + output_tokens
+        cost_usd = self._calculate_cost(model, input_tokens, output_tokens)
+
+        llm_response = LLMResponse(
+            request_id=request_id,
+            model=model,
+            content=content,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            cost_usd=cost_usd,
+            latency_ms=round(latency_ms, 2),
+            metadata=metadata,
+            error=error,
+        )
+
+        self._request_log.append(llm_response)
+
+        logger.info(
+            f"LLM Response [{request_id}] tokens={total_tokens} cost=${cost_usd:.6f} latency={latency_ms:.0f}ms"
+        )
+
+        return llm_response
+
+    async def extract_json_async(
+        self,
+        text: str,
+        schema: dict[str, Any],
+        instructions: str,
+        model: str | None = None,
+        metadata: dict | None = None,
+    ) -> tuple[dict | None, LLMResponse]:
+        """Extract structured JSON from text using a schema (async version)."""
+        prompt = f"""{instructions}
+
+Output valid JSON matching this schema:
+{json.dumps(schema, indent=2)}
+
+Text to analyze:
+{text}
+
+Respond with ONLY valid JSON, no other text."""
+
+        response = await self.complete_async(
+            prompt=prompt,
+            model=model,
+            metadata={"extraction_type": "json", **(metadata or {})},
+        )
+
+        if response.error:
+            return None, response
+
+        try:
+            result_text = response.content.strip()
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            parsed = json.loads(result_text)
+            return parsed, response
+        except json.JSONDecodeError as e:
+            response.error = f"JSON parse error: {e}"
+            logger.error(f"LLM Response [{response.request_id}] JSON parse failed: {e}")
+            return None, response
 
     def extract_json(
         self,
