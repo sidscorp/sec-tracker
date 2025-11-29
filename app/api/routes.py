@@ -275,9 +275,9 @@ async def get_llm_stats():
 
 
 @router.get("/llm/log")
-async def get_llm_log():
+async def get_llm_log(include_prompt: bool = False):
     """Get full LLM request log for current session."""
-    return llm_client.get_request_log()
+    return llm_client.get_request_log(include_prompt=include_prompt)
 
 
 @router.post("/llm/clear")

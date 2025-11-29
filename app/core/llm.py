@@ -47,12 +47,13 @@ class LLMResponse:
     total_tokens: int
     cost_usd: float
     latency_ms: float
+    prompt: str = ""  # Store the input prompt for debugging
     metadata: dict = field(default_factory=dict)
     timestamp: datetime = field(default_factory=datetime.utcnow)
     error: str | None = None
 
-    def to_dict(self) -> dict:
-        return {
+    def to_dict(self, include_prompt: bool = False) -> dict:
+        d = {
             "request_id": self.request_id,
             "model": self.model,
             "content": self.content,
@@ -65,6 +66,9 @@ class LLMResponse:
             "timestamp": self.timestamp.isoformat(),
             "error": self.error,
         }
+        if include_prompt:
+            d["prompt"] = self.prompt
+        return d
 
 
 class LLMClient:
@@ -159,6 +163,7 @@ class LLMClient:
             total_tokens=total_tokens,
             cost_usd=cost_usd,
             latency_ms=round(latency_ms, 2),
+            prompt=prompt,
             metadata=metadata,
             error=error,
         )
@@ -226,6 +231,7 @@ class LLMClient:
             total_tokens=total_tokens,
             cost_usd=cost_usd,
             latency_ms=round(latency_ms, 2),
+            prompt=prompt,
             metadata=metadata,
             error=error,
         )
@@ -342,9 +348,9 @@ Respond with ONLY valid JSON, no other text."""
             "errors": errors,
         }
 
-    def get_request_log(self) -> list[dict]:
+    def get_request_log(self, include_prompt: bool = False) -> list[dict]:
         """Get full request log."""
-        return [r.to_dict() for r in self._request_log]
+        return [r.to_dict(include_prompt=include_prompt) for r in self._request_log]
 
     def clear_log(self):
         """Clear the request log."""
