@@ -14,12 +14,6 @@ dist/
 build/
 .eggs/
 
-# Environment
-.env
-.env.local
-.env.*.local
-*.env
-
 # IDE
 .idea/
 .vscode/
@@ -51,3 +45,4 @@ scratch/
 .claude/
 .claude*
 CLAUDE.md
+.crush/
